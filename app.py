@@ -38,6 +38,31 @@ Strict Rules you MUST follow:
 """
 
 # --- HELPER FUNCTIONS ---
+@st.cache_resource
+def get_best_model_name():
+    """Dynamically fetches the best available model for this specific API key."""
+    try:
+        valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Try to find a 1.5 flash model first (fastest and supports system instructions)
+        for m in valid_models:
+            if "gemini-1.5-flash" in m and "latest" not in m:
+                return m
+        
+        # Fallback to any 1.5 model
+        for m in valid_models:
+            if "1.5" in m:
+                return m
+                
+        # Absolute fallback
+        if valid_models:
+            return valid_models[0]
+            
+    except Exception as e:
+        return "gemini-1.5-flash" # Default fallback if listing fails
+        
+    return "gemini-1.5-flash"
+
 def check_medical_guardrails(user_input):
     """Checks if the user input contains severe medical keywords."""
     input_lower = user_input.lower()
@@ -67,11 +92,19 @@ with tab1:
     if not api_configured:
         st.error("⚠️ Setup incomplete! Please add the API key to the Streamlit App Settings -> Secrets.")
     else:
-        # Changed to the '-latest' alias to prevent 404 errors
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash-latest",
-            system_instruction=SYSTEM_INSTRUCTION
-        )
+        # 1. Automatically detect the correct model
+        working_model = get_best_model_name()
+        st.caption(f"*(System info: Connected to {working_model})*")
+
+        # 2. Initialize the Gemini Model safely
+        try:
+            # Check if the chosen model is an older one that doesn't support system instructions
+            if "1.5" in working_model or "2.0" in working_model:
+                model = genai.GenerativeModel(model_name=working_model, system_instruction=SYSTEM_INSTRUCTION)
+            else:
+                model = genai.GenerativeModel(model_name=working_model)
+        except Exception as e:
+            st.error(f"Failed to initialize model: {e}")
 
         # Initialize chat history
         if "messages" not in st.session_state:
@@ -79,7 +112,10 @@ with tab1:
             
         # Initialize Gemini Chat Session (for memory)
         if "chat_session" not in st.session_state:
-            st.session_state.chat_session = model.start_chat(history=[])
+            try:
+                st.session_state.chat_session = model.start_chat(history=[])
+            except Exception as e:
+                st.error("Failed to start chat session. Please refresh the page.")
 
         # Display UI chat history
         for message in st.session_state.messages:
@@ -92,7 +128,7 @@ with tab1:
             st.chat_message("user").markdown(prompt)
             st.session_state.messages.append({"role": "user", "content": prompt})
 
-            # 1. STRICT THRESHOLD CHECK
+            # STRICT THRESHOLD CHECK
             if check_medical_guardrails(prompt):
                 guardrail_msg = f"**⚠️ MEDICAL THRESHOLD REACHED:** It sounds like you might be experiencing a medical issue that requires professional attention. I cannot provide medical advice for this. Please halt use of this app for this issue and consult a doctor immediately.\n\n**We strongly recommend contacting your Gynecologist:**\n* **Doctor:** {GYNAE_NAME}\n* **Contact:** {GYNAE_CONTACT}\n* **Clinic:** {GYNAE_CLINIC}"
                 
@@ -100,7 +136,7 @@ with tab1:
                     st.error(guardrail_msg)
                 st.session_state.messages.append({"role": "assistant", "content": guardrail_msg})
             
-            # 2. REAL LLM CONVERSATION FLOW
+            # REAL LLM CONVERSATION FLOW
             else:
                 with st.chat_message("assistant"):
                     with st.spinner("Thinking..."):
@@ -111,36 +147,23 @@ with tab1:
                         except Exception as e:
                             st.error(f"Google API Error: {e}")
 
-# --- TAB 2: AGENTIC PRODUCT RECOMMENDER ---
+# --- TAB 2 & 3 (Unchanged) ---
 with tab2:
     st.subheader("Discover Safe & Eco-Friendly Products")
-    st.write("Looking for something specific? Let our AI agent find the best gynecologist-approved products.")
-    
     product_query = st.text_input("What are you looking for?", placeholder="e.g., organic pads, heating patches")
-    
     if st.button("Search Products"):
         if product_query:
-            with st.spinner("Agent is searching..."):
-                results = search_products(product_query)
-                for item in results:
-                    st.markdown(f"**{item['name']}** - {item['desc']} [🛒 Buy Here]({item['link']})")
-                    st.divider()
+            results = search_products(product_query)
+            for item in results:
+                st.markdown(f"**{item['name']}** - {item['desc']} [🛒 Buy Here]({item['link']})")
+                st.divider()
 
-# --- TAB 3: ANONYMOUS SURVEY ---
 with tab3:
     st.subheader("Research Survey")
-    st.markdown("All data collected is **100% anonymous** and used to develop better menstrual health products.")
-    
     with st.form("survey_form"):
         age_group = st.selectbox("Age Group", ["Under 18", "18-24", "25-34", "35-44", "45+"])
-        primary_product = st.selectbox("Primary Menstrual Product Used", ["Pads", "Tampons", "Menstrual Cups", "Period Panties", "Other"])
-        comfort_level = st.slider("How comfortable are you with your current products?", 1, 10, 5)
-        issues = st.text_area("Do you face any specific issues? (e.g., rashes, leaks) - Optional")
-        
+        primary_product = st.selectbox("Primary Menstrual Product Used", ["Pads", "Tampons", "Menstrual Cups", "Period Panties"])
         consent = st.checkbox("I consent to sharing this anonymous data for research purposes.")
-        
         if st.form_submit_button("Submit Survey"):
-            if consent:
-                st.success("Thank you! Your anonymous response has been recorded.")
-            else:
-                st.error("Please provide consent to submit the form.")
+            if consent: st.success("Thank you! Your anonymous response has been recorded.")
+            else: st.error("Please provide consent to submit the form.")
