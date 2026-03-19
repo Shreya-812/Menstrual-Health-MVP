@@ -19,7 +19,7 @@ try:
         genai.configure(api_key=API_KEY)
     else:
         # Fallback to Streamlit secrets if not hardcoded
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        genai.configure(api_key=st.secrets["AIzaSyBP3femGLpYKPMPN7XRpyF3KGT_kP02tNI"])
     api_configured = True
 except Exception:
     api_configured = False
