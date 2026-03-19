@@ -1,5 +1,6 @@
 import streamlit as st
 import re
+import urllib.parse
 import google.generativeai as genai
 
 # --- CONFIGURATION ---
@@ -43,24 +44,14 @@ def get_best_model_name():
     """Dynamically fetches the best available model for this specific API key."""
     try:
         valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Try to find a 1.5 flash model first (fastest and supports system instructions)
         for m in valid_models:
             if "gemini-1.5-flash" in m and "latest" not in m:
                 return m
-        
-        # Fallback to any 1.5 model
         for m in valid_models:
-            if "1.5" in m:
-                return m
-                
-        # Absolute fallback
-        if valid_models:
-            return valid_models[0]
-            
-    except Exception as e:
-        return "gemini-1.5-flash" # Default fallback if listing fails
-        
+            if "1.5" in m: return m
+        if valid_models: return valid_models[0]
+    except Exception:
+        pass
     return "gemini-1.5-flash"
 
 def check_medical_guardrails(user_input):
@@ -71,19 +62,65 @@ def check_medical_guardrails(user_input):
             return True
     return False
 
-def search_products(query):
-    """Mock Agent Function: Returns curated affiliate links based on query"""
-    products = [
-        {"name": "Eco-Friendly Organic Pads", "desc": "100% organic cotton, highly absorbent, biodegradable.", "link": "https://amazon.com/mock-organic-pads"},
-        {"name": "Comfort Period Panties", "desc": "Reusable, leak-proof, and great for heavy flow days.", "link": "https://flipkart.com/mock-period-panties"},
-        {"name": "Menstrual Cup (Beginner Friendly)", "desc": "Medical grade silicone, safe on skin, lasts up to 10 years.", "link": "https://amazon.com/mock-cup"}
-    ]
-    return products
+def get_live_product_recommendations(query, model_name):
+    """
+    REAL AGENT FUNCTION: Uses Gemini to suggest specific products 
+    and generates live Amazon search URLs for them.
+    """
+    try:
+        # 1. Ask the AI to suggest 3 specific products based on user query
+        agent_model = genai.GenerativeModel(model_name=model_name)
+        prompt = f"""
+        The user is looking for menstrual health products related to: "{query}".
+        Suggest 3 specific, safe, and highly-rated product categories/types.
+        Format your response EXACTLY like this (do not add any other text or markdown):
+        Product 1 Name | Short description of why it is good for health/hygiene
+        Product 2 Name | Short description of why it is good for health/hygiene
+        Product 3 Name | Short description of why it is good for health/hygiene
+        """
+        
+        response = agent_model.generate_content(prompt)
+        lines = response.text.strip().split('\n')
+        
+        results = []
+        for line in lines:
+            if '|' in line:
+                name, desc = line.split('|', 1)
+                name = name.strip()
+                desc = desc.strip()
+                
+                # 2. Convert the product name into a live Amazon search link!
+                encoded_name = urllib.parse.quote(name)
+                # You can change amazon.com to amazon.in depending on your region
+                amazon_link = f"https://www.amazon.in/s?k={encoded_name}"
+                
+                results.append({
+                    "name": name,
+                    "desc": desc,
+                    "link": amazon_link
+                })
+        
+        if not results:
+            raise Exception("Parsing failed")
+            
+        return results
+
+    except Exception as e:
+        # Fallback if the AI fails to format correctly
+        encoded_query = urllib.parse.quote(query)
+        return [{
+            "name": f"Top rated {query}", 
+            "desc": "Click here to see the best options currently available.", 
+            "link": f"https://www.amazon.in/s?k={encoded_query}"
+        }]
 
 # --- UI LAYOUT ---
 st.title("🌸 Menstrual Health & Care Assistant")
 
 tab1, tab2, tab3 = st.tabs(["💬 Chatbot", "🛍️ Product Recommendations", "📝 Anonymous Survey"])
+
+# Initialize the model early so Tab 2 can also use it
+working_model = get_best_model_name() if api_configured else None
 
 # --- TAB 1: GUARDRAILED CHATBOT WITH REAL LLM ---
 with tab1:
@@ -92,13 +129,9 @@ with tab1:
     if not api_configured:
         st.error("⚠️ Setup incomplete! Please add the API key to the Streamlit App Settings -> Secrets.")
     else:
-        # 1. Automatically detect the correct model
-        working_model = get_best_model_name()
         st.caption(f"*(System info: Connected to {working_model})*")
 
-        # 2. Initialize the Gemini Model safely
         try:
-            # Check if the chosen model is an older one that doesn't support system instructions
             if "1.5" in working_model or "2.0" in working_model:
                 model = genai.GenerativeModel(model_name=working_model, system_instruction=SYSTEM_INSTRUCTION)
             else:
@@ -147,23 +180,41 @@ with tab1:
                         except Exception as e:
                             st.error(f"Google API Error: {e}")
 
-# --- TAB 2 & 3 (Unchanged) ---
+# --- TAB 2: AGENTIC PRODUCT RECOMMENDER ---
 with tab2:
     st.subheader("Discover Safe & Eco-Friendly Products")
-    product_query = st.text_input("What are you looking for?", placeholder="e.g., organic pads, heating patches")
+    st.write("Looking for something specific? Let our AI agent find the best gynecologist-approved products.")
+    
+    product_query = st.text_input("What are you looking for?", placeholder="e.g., eco friendly pads, heating patches")
+    
     if st.button("Search Products"):
-        if product_query:
-            results = search_products(product_query)
-            for item in results:
-                st.markdown(f"**{item['name']}** - {item['desc']} [🛒 Buy Here]({item['link']})")
-                st.divider()
+        if not api_configured:
+            st.error("Please configure the API key first.")
+        elif product_query:
+            with st.spinner("Agent is analyzing your request and fetching live links..."):
+                results = get_live_product_recommendations(product_query, working_model)
+                for item in results:
+                    st.markdown(f"**{item['name']}**")
+                    st.write(f"{item['desc']}")
+                    # Use a Streamlit native link button for a cleaner look
+                    st.link_button("🛒 Search & Buy on Amazon", item['link'])
+                    st.divider()
 
+# --- TAB 3: ANONYMOUS SURVEY ---
 with tab3:
     st.subheader("Research Survey")
+    st.markdown("All data collected is **100% anonymous** and used to develop better menstrual health products.")
+    
     with st.form("survey_form"):
         age_group = st.selectbox("Age Group", ["Under 18", "18-24", "25-34", "35-44", "45+"])
-        primary_product = st.selectbox("Primary Menstrual Product Used", ["Pads", "Tampons", "Menstrual Cups", "Period Panties"])
+        primary_product = st.selectbox("Primary Menstrual Product Used", ["Pads", "Tampons", "Menstrual Cups", "Period Panties", "Other"])
+        comfort_level = st.slider("How comfortable are you with your current products?", 1, 10, 5)
+        issues = st.text_area("Do you face any specific issues? (e.g., rashes, leaks) - Optional")
+        
         consent = st.checkbox("I consent to sharing this anonymous data for research purposes.")
+        
         if st.form_submit_button("Submit Survey"):
-            if consent: st.success("Thank you! Your anonymous response has been recorded.")
-            else: st.error("Please provide consent to submit the form.")
+            if consent:
+                st.success("Thank you! Your anonymous response has been recorded.")
+            else:
+                st.error("Please provide consent to submit the form.")
