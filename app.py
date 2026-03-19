@@ -67,9 +67,9 @@ with tab1:
     if not api_configured:
         st.error("⚠️ Setup incomplete! Please add the API key to the Streamlit App Settings -> Secrets.")
     else:
-        # Initialize the Gemini Model
+        # Changed to the '-latest' alias to prevent 404 errors
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-1.5-flash-latest",
             system_instruction=SYSTEM_INSTRUCTION
         )
 
