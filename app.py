@@ -2,27 +2,17 @@ import streamlit as st
 import re
 import google.generativeai as genai
 
-# ==========================================
-# 🛑 PASTE YOUR API KEY HERE
-# ==========================================
-# Replace "YOUR_API_KEY_HERE" with your actual Gemini API Key.
-# IF YOUR GITHUB REPO IS PUBLIC: Do NOT paste your key here. 
-# Keep it as "YOUR_API_KEY_HERE" and use Streamlit Secrets instead.
-API_KEY = "AIzaSyBP3femGLpYKPMPN7XRpyF3KGT_kP02tNI"
-
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Menstrual Health & Care", page_icon="🌸", layout="centered")
 
-# Try to configure the API key
+# Securely fetch the API key from Streamlit Secrets
+api_configured = False
 try:
-    if API_KEY != "AIzaSyBP3femGLpYKPMPN7XRpyF3KGT_kP02tNI":
-        genai.configure(api_key=API_KEY)
-    else:
-        # Fallback to Streamlit secrets if not hardcoded
-        genai.configure(api_key=st.secrets["AIzaSyBP3femGLpYKPMPN7XRpyF3KGT_kP02tNI"])
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=API_KEY)
     api_configured = True
-except Exception:
-    api_configured = False
+except Exception as e:
+    st.sidebar.error("API Key not found in Streamlit Secrets. Please configure it in the app settings.")
 
 # Mock Gynecologist Data
 GYNAE_NAME = "Dr. Jane Doe"
@@ -75,7 +65,7 @@ with tab1:
     st.subheader("Chat about Menstrual Hygiene")
     
     if not api_configured:
-        st.error("⚠️ API Key is missing! Please update `app.py` or configure Streamlit Secrets.")
+        st.error("⚠️ Setup incomplete! Please add the API key to the Streamlit App Settings -> Secrets.")
     else:
         # Initialize the Gemini Model
         model = genai.GenerativeModel(
@@ -119,7 +109,7 @@ with tab1:
                             st.markdown(response.text)
                             st.session_state.messages.append({"role": "assistant", "content": response.text})
                         except Exception as e:
-                            st.error(f"API Error: {e}")
+                            st.error(f"Google API Error: {e}")
 
 # --- TAB 2: AGENTIC PRODUCT RECOMMENDER ---
 with tab2:
